@@ -6,11 +6,8 @@ import {expect} from 'chai';
 describe('WordDiff', function() {
   describe('#tokenize', function() {
     it('should give each word & punctuation mark its own token, including leading and trailing whitespace', function() {
-      expect(
-        wordDiff.tokenize(
-          'foo bar baz jurídica wir üben    bla\t\t \txyzáxyz  \n\n\n  animá-los\r\n\r\n(wibbly wobbly)().'
-        )
-      ).to.deep.equal([
+      const string = 'foo bar baz jurídica wir üben    bla\t\t \txyzáxyz  \n\n\n  animá-los\r\n\r\n(wibbly wobbly)().';
+      const expectedResult = [
         'foo ',
         ' bar ',
         ' baz ',
@@ -29,7 +26,12 @@ describe('WordDiff', function() {
         '(',
         ')',
         '.'
-      ]);
+      ];
+      expect(wordDiff.tokenize(string)).to.deep.equal(expectedResult);
+      expect(wordDiff.tokenize(
+        string,
+        { intlSegmenter: new Intl.Segmenter('en', { granularity: 'word' }) }
+      )).to.deep.equal(expectedResult);
     });
 
     // Test for bug reported at https://github.com/kpdecker/jsdiff/issues/553
@@ -377,6 +379,78 @@ describe('WordDiff', function() {
         {intlSegmenter: englishSegmenter}
       ))).to.equal(
         '<del>A</del><ins>B</ins>\n\nX'
+      );
+    });
+
+    it('handles diacritics on whitespace differently in Segmenter mode vs normal mode', () => {
+      // Regression test for https://github.com/kpdecker/jsdiff/issues/664
+      const oldString = 'abc \u0300X def';
+      const newString = 'abc \u0300Y ghi';
+
+      expect(diffWords(oldString, newString)).to.deep.equal([
+        {
+          count: 2,
+          added: false,
+          removed: false,
+          value: 'abc \u0300'
+        },
+        {
+          count: 2,
+          added: false,
+          removed: true,
+          value: 'X def'
+        },
+        {
+          count: 2,
+          added: true,
+          removed: false,
+          value: 'Y ghi'
+        }
+      ]);
+
+      expect(diffWords(oldString, newString, { intlSegmenter: new Intl.Segmenter('en', { granularity: 'word' }) })).to.deep.equal([
+        {
+          // Note this is ONE token in segmenter mode, because ' \u0300' is
+          // considered pure whitespace
+          count: 1,
+          added: false,
+          removed: false,
+          value: 'abc \u0300'
+        },
+        {
+          count: 2,
+          added: false,
+          removed: true,
+          value: 'X def'
+        },
+        {
+          count: 2,
+          added: true,
+          removed: false,
+          value: 'Y ghi'
+        }
+      ]);
+    });
+
+    it('handles orphaned diacritics after newlines acceptably', () => {
+      // Oddly enough, an Intl.Segmenter in word mode seems to think that
+      // diacritics can modify spaces, but not newlines. So a diacritic
+      // modifier character after a newline is always a standalone segment.
+      // This test sanity-checks that we behave reasonably when encountering
+      // such segments.
+      expect(
+        diffWords(
+          'abc \n\u0300 X \n\u0300def',
+          'abc \n\u0300 Y def',
+          { intlSegmenter: new Intl.Segmenter('en', { granularity: 'word' }) }
+        )
+      ).to.deep.equal(
+        [
+          { count: 2, added: false, removed: false, value: 'abc \ǹ ' },
+          { count: 2, added: false, removed: true, value: 'X \ǹ' },
+          { count: 1, added: true, removed: false, value: 'Y ' },
+          { count: 1, added: false, removed: false, value: 'def' }
+        ]
       );
     });
   });
